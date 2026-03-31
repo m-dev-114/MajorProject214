@@ -585,7 +585,7 @@ def bert_classify(texts_t):
 # ══════════════════════════════════════════════════════════════════════════
 # SESSION STATE
 # ══════════════════════════════════════════════════════════════════════════
-for k,v in [("api_url","http://localhost:8000"),("api_ok",False),
+for k,v in [("api_url","https://agile-api-f4ne.onrender.com"),("api_ok",False),
             ("df",None),("api_client",None),("summary",None),
             ("sprints",[]),("team",[]),("velocity",None)]:
     if k not in st.session_state: st.session_state[k]=v
@@ -651,7 +651,7 @@ with T[0]:
         </div>""", unsafe_allow_html=True)
 
         api_url_in = st.text_input("API Base URL", st.session_state.api_url,
-                                    placeholder="http://localhost:8000", key="api_url_in")
+                                    placeholder="https://agile-api-f4ne.onrender.com", key="api_url_in")
         limit_in   = st.slider("Dataset size to fetch", 100, 500, 300, step=50, key="api_limit")
 
         c1, c2 = st.columns(2)
