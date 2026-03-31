@@ -913,7 +913,7 @@ def pred_card(label, value, conf, color):
       <div class='pred-val' style='color:{color};'>{value}</div>
       <div class='pred-conf'>{conf}</div>
       <div class='pw' style='margin-top:10px;'>
-        <div class='pf' style='background:{color};width:{float(conf.replace("%","").strip()) if "%" in conf else 50}%;'></div></div>
+        <div class='pf' style='background:{color};width:{float(conf.split('%')[0]) if '%' in conf else 50}%;'></div></div>
     </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════
