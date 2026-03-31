@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║  AGILE Dashboard Mangement                                     ║
+║  AGILE INTELLIGENCE PLATFORM                                     ║
 ║  Streamlit · Fetches from Agile Data API                        ║
 ║  ML: Fine-tuned LR · BERT · Spark · Improved K-Means           ║
 ║  Run: streamlit run agile_platform.py                            ║
@@ -31,7 +31,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 # ── MUST be first ──────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Agile Dashboard Management Platform",
+    page_title="Agile Intelligence Platform",
     layout="wide",
     page_icon="◆",
     initial_sidebar_state="collapsed"
@@ -361,6 +361,8 @@ def finetune_lr(Xtr,ytr,Xte,yte):
 
 @st.cache_data(show_spinner="◆ Training models from API data...")
 def train_models(df):
+    # Anti-overfit: require minimum samples and balanced classes
+    MIN_ROWS = 80  # skip model if not enough data
     R = {}
 
     # Obj1 Sprint — Fine-tuned LR + TF-IDF (BERT proxy)
@@ -368,21 +370,24 @@ def train_models(df):
         base=[c for c in ["Planned_Story_Points_Sprint","Completed_Story_Points",
               "Percent_Done","Days_Remaining_Sprint","Historical_Velocity",
               "Blocked_Stories","Scope_Change"] if c in df.columns]
+        # TF-IDF text features (BERT proxy) — limited to avoid overfitting on small data
         txX,txF,tv=None,[],None
-        if "Summary" in df.columns:
-            txX,txF,tv=tfidf_features(tuple(df["Summary"].astype(str)),25)
+        if "Summary" in df.columns and len(df)>=MIN_ROWS:
+            txX,txF,tv=tfidf_features(tuple(df["Summary"].astype(str)),15)
         Xn=df[base].fillna(0).values
-        X = np.hstack([Xn,txX]) if txX is not None else Xn
+        X = np.hstack([Xn,txX]) if txX is not None and len(txF)>0 else Xn
         y = df["Success_Label"]
-        if y.nunique()>1:
+        if y.nunique()>1 and len(df)>=MIN_ROWS:
             sc=StandardScaler(); Xs=sc.fit_transform(X)
-            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.2,random_state=42)
+            # Use 25% test split for better eval, stratify for balanced classes
+            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.25,random_state=42,
+                                               stratify=y if y.value_counts().min()>=3 else None)
             bm,bacc,rows=finetune_lr(Xtr,ytr,Xte,yte)
             yp=bm.predict(Xte)
             try:    auc=float(roc_auc_score(yte,bm.predict_proba(Xte)[:,1]))
             except: auc=0.0
-            R["sprint"]=dict(model=bm,scaler=sc,features=base+txF,tfidf=tv,
-                             base=base,textf=txF,algo="Fine-tuned LR + TF-IDF",
+            R["sprint"]=dict(model=bm,scaler=sc,features=base+(txF if txF else []),tfidf=tv,
+                             base=base,textf=txF if txF else [],algo="Fine-tuned LR + TF-IDF",
                              acc=float(bacc),f1=float(f1_score(yte,yp,average="weighted")),
                              auc=auc,report=classification_report(yte,yp),
                              cm=confusion_matrix(yte,yp).tolist(),tune=rows)
@@ -394,9 +399,10 @@ def train_models(df):
            "Remaining_Days_Resource","High_Priority_Tasks_Resource","Current_Workload_Percent"]
            if c in df.columns]
         X,y=df[f].fillna(0),df["Expected_Overload"]
-        if y.nunique()>1:
+        if y.nunique()>1 and len(df)>=MIN_ROWS:
             sc=StandardScaler(); Xs=sc.fit_transform(X)
-            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.2,random_state=42)
+            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.25,random_state=42,
+                                               stratify=y if y.value_counts().min()>=3 else None)
             m=GaussianNB(); m.fit(Xtr,ytr); yp=m.predict(Xte)
             R["workload"]=dict(model=m,scaler=sc,features=f,algo="Naive Bayes",
                                acc=float(accuracy_score(yte,yp)),
@@ -410,24 +416,27 @@ def train_models(df):
         Xb=pd.get_dummies(df[["Issue_Type","Priority"]],drop_first=False)
         ex=[c for c in ["Original_Estimate_Hours","Story_Points_Issue"] if c in df.columns]
         X=pd.concat([Xb,df[ex]],axis=1).fillna(0); y=df["Resolution_Time_Hours"]
-        sc=StandardScaler(); Xs=sc.fit_transform(X)
-        Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.2,random_state=42)
-        m=Ridge(alpha=1.0); m.fit(Xtr,ytr); yp=m.predict(Xte)
-        R["ttr"]=dict(model=m,scaler=sc,features=X.columns.tolist(),X3=X,
-                      algo="Ridge Regression",
-                      r2=float(r2_score(yte,yp)),mse=float(mean_squared_error(yte,yp)))
+        if len(df)>=MIN_ROWS:
+            sc=StandardScaler(); Xs=sc.fit_transform(X)
+            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.25,random_state=42)
+            m=Ridge(alpha=2.0); m.fit(Xtr,ytr); yp=m.predict(Xte)
+            R["ttr"]=dict(model=m,scaler=sc,features=X.columns.tolist(),X3=X,
+                          algo="Ridge Regression",
+                          r2=float(r2_score(yte,yp)),mse=float(mean_squared_error(yte,yp)))
     except: pass
 
-    # Obj4 Burnout — Decision Tree
+    # Obj4 Burnout — Decision Tree (depth-limited to prevent overfit)
     try:
         f=[c for c in ["Total_SP_This_Sprint","Historical_Avg_SP_Burnout",
            "High_Priority_Tasks_Burnout","Consecutive_Overloads"] if c in df.columns]
         X,y=df[f].fillna(0),df["Risk_Flag"]
-        if y.nunique()>1:
+        if y.nunique()>1 and len(df)>=MIN_ROWS:
             sc=StandardScaler(); Xs=sc.fit_transform(X)
-            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.2,random_state=42)
-            m=DecisionTreeClassifier(max_depth=5,class_weight="balanced",
-                                      random_state=42,min_samples_leaf=5)
+            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.25,random_state=42,
+                                               stratify=y if y.value_counts().min()>=3 else None)
+            # max_depth=4 and min_samples_leaf=15 prevent overfit
+            m=DecisionTreeClassifier(max_depth=4,class_weight="balanced",
+                                      random_state=42,min_samples_leaf=15)
             m.fit(Xtr,ytr); yp=m.predict(Xte)
             R["burnout"]=dict(model=m,scaler=sc,features=f,algo="Decision Tree",
                               acc=float(accuracy_score(yte,yp)),
@@ -436,23 +445,34 @@ def train_models(df):
                               cm=confusion_matrix(yte,yp).tolist())
     except: pass
 
-    # Obj5 Allocation — KNN
+    # Obj5 Allocation — KNN + TF-IDF text features for better accuracy
     try:
         d2=df.copy()
         les=LabelEncoder(); lel=LabelEncoder()
         d2["Summary_enc"]=les.fit_transform(d2["Summary"].astype(str))
         d2["Labels_enc"] =lel.fit_transform(d2["Labels"].astype(str))
-        X=d2[["Summary_enc","Labels_enc","Original_Estimate_Resource","Story_Points_Resource"]].fillna(0)
+        # Add TF-IDF features for summary text to improve allocation
+        alloc_X_num=d2[["Summary_enc","Labels_enc","Original_Estimate_Resource","Story_Points_Resource"]].fillna(0)
+        if "Summary" in d2.columns and len(d2)>=MIN_ROWS:
+            try:
+                tv_a=TfidfVectorizer(max_features=20,ngram_range=(1,1),min_df=2)
+                X_txt=tv_a.fit_transform(d2["Summary"].astype(str)).toarray()
+                alloc_X=np.hstack([alloc_X_num.values, X_txt])
+            except:
+                alloc_X=alloc_X_num.values
+        else:
+            alloc_X=alloc_X_num.values
         y=d2["Assignee_Resource"]
-        sc=StandardScaler(); Xs=sc.fit_transform(X)
-        Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.2,random_state=42)
-        k=min(5,len(Xtr)-1)
-        m=KNeighborsClassifier(n_neighbors=k,weights="distance",n_jobs=-1)
-        m.fit(Xtr,ytr)
-        R["alloc"]=dict(model=m,scaler=sc,features=X.columns.tolist(),
-                        le_s=les,le_l=lel,algo="KNN",
-                        acc=float(accuracy_score(yte,m.predict(Xte))),
-                        f1=float(f1_score(yte,m.predict(Xte),average="weighted")))
+        if len(d2)>=MIN_ROWS:
+            sc=StandardScaler(); Xs=sc.fit_transform(alloc_X)
+            Xtr,Xte,ytr,yte=train_test_split(Xs,y,test_size=0.25,random_state=42)
+            k=min(7,len(Xtr)//10)
+            m=KNeighborsClassifier(n_neighbors=max(3,k),weights="distance",n_jobs=-1)
+            m.fit(Xtr,ytr)
+            R["alloc"]=dict(model=m,scaler=sc,features=alloc_X_num.columns.tolist(),
+                            le_s=les,le_l=lel,algo="KNN + TF-IDF",
+                            acc=float(accuracy_score(yte,m.predict(Xte))),
+                            f1=float(f1_score(yte,m.predict(Xte),average="weighted")))
     except: pass
 
     return R
@@ -600,7 +620,7 @@ api_cls   = "green" if st.session_state.api_ok else "yellow blink"
 
 st.markdown(f"""
 <div class="topnav">
-  <div class="logo"><div class="logo-gem"></div>AGILE Dashboard Management</div>
+  <div class="logo"><div class="logo-gem"></div>AGILE INTELLIGENCE</div>
   <div class="nav-pills">
     <span class="nav-pill {'green' if SPARK_OK and _spark else 'blue'}">⚡ {spark_lbl}</span>
     <span class="nav-pill {api_cls}">● {api_lbl}</span>
@@ -913,7 +933,7 @@ def pred_card(label, value, conf, color):
       <div class='pred-val' style='color:{color};'>{value}</div>
       <div class='pred-conf'>{conf}</div>
       <div class='pw' style='margin-top:10px;'>
-        <div class='pf' style='background:{color};width:{float(conf.split('%')[0]) if '%' in conf else 50}%;'></div></div>
+        <div class='pf' style='background:{color};width:{float(conf.replace("%","").strip()) if "%" in conf else 50}%;'></div></div>
     </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1191,9 +1211,7 @@ with T[8]:
     # Sprint Ensemble
     st.markdown("<div class='sec-hdr'>SPRINT — ENSEMBLE VOTING (LR + GBT + RF + ADABOOST)</div>",unsafe_allow_html=True)
     if "sprint" in SM:
-        s = SM["sprint"]
-        ea = s["acc"]   # ✅ fixed
-        best = max(s["ind"], key=s["ind"].get)
+        s=SM["sprint"]; ea = s.get("acc", 0); best=max(s["ind"],key=s["ind"].get)
         c1,c2,c3=st.columns(3)
         c1.metric("Ensemble Acc",f"{ea:.2%}"); c2.metric("Best Single",f"{s['ind'][best]:.2%}",best)
         c3.metric("Spark Feats",str(len([f for f in s["feat"] if f in s["sf"]])))
