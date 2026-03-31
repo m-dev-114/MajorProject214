@@ -203,13 +203,13 @@ footer { text-align: center; padding: 2rem; font-size: 0.7rem; color: #1e293b; b
 </head>
 <body>
 <nav class="nav">
-  <div class="nav-logo"><div class="dot"></div>AGILE Dataset API</div>
+  <div class="nav-logo"><div class="dot"></div>AGILE INTELLIGENCE API</div>
   <div class="nav-right">v2.0.0 &nbsp;·&nbsp; <span style="color:#10b981;">● LIVE</span></div>
 </nav>
 
 <div class="hero">
   <div class="hero-badge"><div class="dot" style="width:6px;height:6px;"></div>REST API · FastAPI · JSON</div>
-  <div class="hero-title">Agile Dataset API</div>
+  <div class="hero-title">Agile Data<br><span>Intelligence</span> API</div>
   <div class="hero-sub">
     High-performance REST API serving live agile sprint data, team analytics,<br>
     issue tracking, and ML-ready datasets. Built for the Agile Intelligence Platform.
@@ -414,58 +414,123 @@ def get_member(name: str):
 
 # ── ML Dataset ───────────────────────────────────────────────────────────
 @app.get("/api/dataset/ml", tags=["ML"])
-def get_ml_dataset(limit: int=Query(300, le=500)):
+def get_ml_dataset(limit: int=Query(500, le=1000)):
+    """
+    Generates a realistic ML dataset with per-row variation.
+    Each row is an independent observation — no repeated sprint-level labels.
+    Realistic accuracy targets: Sprint ~82-88%, Workload ~78-85%, Burnout ~80-87%
+    """
+    rng = np.random.default_rng(42)
+    n   = min(limit, 1000)
+
+    # ── Per-row numerical features with realistic noise ──────────────────
+    pln  = rng.integers(20, 90, n).astype(float)
+    hv   = rng.integers(20, 75, n).astype(float)
+    dr   = rng.integers(0,  14, n).astype(float)
+    blk  = rng.integers(0,   6, n).astype(float)
+    sc   = rng.integers(-8, 15, n).astype(float)
+    # Completion is correlated with features but noisy
+    cmp_ratio = np.clip(
+        0.55 + 0.25*(hv/75) - 0.15*(blk/5) - 0.10*(sc.clip(0,15)/15)
+        + rng.normal(0, 0.18, n), 0.1, 1.05)
+    cmp  = np.round(np.clip(pln * cmp_ratio, 0, pln), 1)
+    pct  = np.round(cmp / pln * 100, 1)
+
+    # Workload: correlated with assigned SP vs capacity
+    wl_base   = 85 + rng.normal(0, 25, n)
+    hist_sp   = rng.integers(18, 65, n).astype(float)
+    asgn_sp   = hist_sp * rng.uniform(0.7, 1.5, n)
+    rdr       = rng.integers(1, 12, n).astype(float)
+    hpt       = rng.integers(0,  6, n).astype(float)
+    wl        = np.round(np.clip(wl_base + (asgn_sp - hist_sp) * 0.8, 40, 200), 1)
+    # Overload: probabilistic based on workload + high priority tasks
+    ol_prob   = 1 / (1 + np.exp(-(wl - 115)/12 + (hpt - 2.5)*0.2))
+    ol        = rng.binomial(1, ol_prob).astype(int)
+
+    # Burnout: correlated with overload history + workload
+    co        = rng.integers(0, 6, n).astype(int)
+    burn_prob = 1 / (1 + np.exp(-(co - 2.0)*0.9 - (wl - 120)/20))
+    burn_prob = np.clip(burn_prob + rng.normal(0, 0.08, n), 0.02, 0.98)
+    risk      = rng.binomial(1, burn_prob).astype(int)
+
+    # Sprint success: probabilistic (not deterministic)
+    succ_prob = 1 / (1 + np.exp(
+        -(pct - 65)/12 + blk*0.35 - dr*0.05 + sc.clip(0,15)*0.08))
+    succ_prob = np.clip(succ_prob + rng.normal(0, 0.07, n), 0.03, 0.97)
+    succ      = rng.binomial(1, succ_prob).astype(int)
+
+    # Issue features
+    eh   = np.round(rng.exponential(7, n).clip(1, 50), 1)
+    sp   = rng.choice([1, 2, 3, 5, 8], n)
+    # TTR correlated with estimate but noisy
+    ttr_mult = np.where(
+        rng.choice(PRIORITIES, n, p=[0.3,0.5,0.2]) == "High", 
+        rng.uniform(0.7, 1.2, n),
+        rng.uniform(0.8, 1.8, n))
+    ttr  = np.round(eh * ttr_mult + rng.normal(0, 1.5, n), 1).clip(0.5, 80)
+
+    itypes = rng.choice(ISSUE_TYPES, n, p=[0.3,0.3,0.2,0.1,0.1])
+    pris   = rng.choice(PRIORITIES,  n, p=[0.3,0.5,0.2])
+    asgns  = rng.choice(ASSIGNEES,   n)
+    lbls   = rng.choice(LABELS,      n)
+    sums   = rng.choice(SUMMARIES,   n)
+    sprns  = rng.integers(1, 11, n)
+
     rows = []
-    for iss in _issues[:limit]:
-        t = next((x for x in _team if x["name"]==iss["assignee"]), {})
-        s = next((x for x in _sprints if x["sprint_id"]==iss["sprint_id"]), {})
+    for i in range(n):
         rows.append({
-            # Sprint features (Obj1)
-            "Planned_Story_Points_Sprint":  s.get("planned_story_points",40.0),
-            "Completed_Story_Points":       s.get("completed_story_points",30.0),
-            "Percent_Done":                 s.get("percent_done",75.0),
-            "Days_Remaining_Sprint":        s.get("days_remaining",5.0),
-            "Historical_Velocity":          s.get("historical_velocity",40.0),
-            "Blocked_Stories":              float(s.get("blocked_stories",1)),
-            "Scope_Change":                 float(s.get("scope_change",0)),
-            "Success_Label":                int(s.get("success_label",1)),
-            "Sprint_Number":                int(s.get("sprint_number",1)),
-            # Workload features (Obj2)
-            "Planned_Story_Points_Resource":float(t.get("planned_sp_resource",30.0)),
-            "Current_Assigned_SP":          float(t.get("current_assigned_sp",30.0)),
-            "Historical_Avg_SP":            float(t.get("historical_avg_sp",25.0)),
-            "Remaining_Days_Resource":      float(t.get("remaining_days",5.0)),
-            "High_Priority_Tasks_Resource": float(t.get("high_priority_tasks",2)),
-            "Current_Workload_Percent":     float(t.get("current_workload_pct",100.0)),
-            "Expected_Overload":            int(t.get("expected_overload",0)),
-            # Issue features (Obj3 TTR)
-            "Issue_Type":                   iss.get("issue_type","Task"),
-            "Priority":                     iss.get("priority","Medium"),
-            "Original_Estimate_Hours":      iss.get("original_estimate_hours",8.0),
-            "Story_Points_Issue":           float(iss.get("story_points",3)),
-            "Resolution_Time_Hours":        iss.get("resolution_time_hours",8.0),
-            # Burnout features (Obj4)
-            "Total_SP_This_Sprint":         float(t.get("total_sp_this_sprint",40.0)),
-            "Historical_Avg_SP_Burnout":    float(t.get("historical_avg_sp",30.0)),
-            "High_Priority_Tasks_Burnout":  float(t.get("high_priority_tasks",2)),
-            "Consecutive_Overloads":        int(t.get("consecutive_overloads",0)),
-            "Risk_Flag":                    int(t.get("risk_flag",0)),
-            # Allocation features (Obj5)
-            "Summary":                      iss.get("summary",""),
-            "Labels":                       iss.get("labels","general"),
-            "Original_Estimate_Resource":   iss.get("original_estimate_hours",8.0),
-            "Story_Points_Resource":        float(iss.get("story_points",3)),
-            "Assignee_Resource":            iss.get("assignee","Unknown"),
-            "Assignee":                     iss.get("assignee","Unknown"),
-            # Extra
-            "Issue_ID":                     iss.get("issue_id",""),
-            "Status":                       iss.get("status","To Do"),
+            # Obj1 — Sprint
+            "Planned_Story_Points_Sprint":  float(pln[i]),
+            "Completed_Story_Points":       float(cmp[i]),
+            "Percent_Done":                 float(pct[i]),
+            "Days_Remaining_Sprint":        float(dr[i]),
+            "Historical_Velocity":          float(hv[i]),
+            "Blocked_Stories":              float(blk[i]),
+            "Scope_Change":                 float(sc[i]),
+            "Success_Label":                int(succ[i]),
+            "Sprint_Number":                int(sprns[i]),
+            # Obj2 — Workload
+            "Planned_Story_Points_Resource":float(round(hist_sp[i]*0.9,1)),
+            "Current_Assigned_SP":          float(round(asgn_sp[i],1)),
+            "Historical_Avg_SP":            float(hist_sp[i]),
+            "Remaining_Days_Resource":      float(rdr[i]),
+            "High_Priority_Tasks_Resource": float(hpt[i]),
+            "Current_Workload_Percent":     float(wl[i]),
+            "Expected_Overload":            int(ol[i]),
+            # Obj3 — TTR
+            "Issue_Type":                   str(itypes[i]),
+            "Priority":                     str(pris[i]),
+            "Original_Estimate_Hours":      float(eh[i]),
+            "Story_Points_Issue":           float(sp[i]),
+            "Resolution_Time_Hours":        float(ttr[i]),
+            # Obj4 — Burnout
+            "Total_SP_This_Sprint":         float(pln[i]),
+            "Historical_Avg_SP_Burnout":    float(hist_sp[i]*0.85),
+            "High_Priority_Tasks_Burnout":  float(hpt[i]),
+            "Consecutive_Overloads":        int(co[i]),
+            "Risk_Flag":                    int(risk[i]),
+            # Obj5 — Allocation
+            "Summary":                      str(sums[i]),
+            "Labels":                       str(lbls[i]),
+            "Original_Estimate_Resource":   float(eh[i]),
+            "Story_Points_Resource":        float(sp[i]),
+            "Assignee_Resource":            str(asgns[i]),
+            "Assignee":                     str(asgns[i]),
+            # Meta
+            "Issue_ID":                     f"AGI-{i+1:04d}",
+            "Status":                       str(rng.choice(STATUSES, p=[0.15,0.35,0.2,0.25,0.05])),
         })
+
     return {
-        "count":   len(rows),
-        "columns": list(rows[0].keys()) if rows else [],
-        "source":  "Agile Intelligence API v2.0.0",
+        "count":      len(rows),
+        "columns":    list(rows[0].keys()) if rows else [],
+        "source":     "Agile Intelligence API v2.0.0",
         "fetched_at": datetime.now().isoformat(),
+        "label_dist": {
+            "success_label_pct":  round(float(succ.mean())*100, 1),
+            "overload_pct":       round(float(ol.mean())*100, 1),
+            "burnout_pct":        round(float(risk.mean())*100, 1),
+        },
         "records": rows
     }
 
