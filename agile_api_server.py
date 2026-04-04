@@ -1,662 +1,443 @@
 """
-╔══════════════════════════════════════════════════════════════════╗
-║  AGILE DATA API SERVER                                           ║
-║  FastAPI · REST Endpoints · Live Agile Data                     ║
-║  Run: uvicorn agile_api_server:app --reload --port 8000         ║
-╚══════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║  AGILE INTELLIGENCE  —  DATA SERVER  (Website 1)             ║
+║  FastAPI · 16 REST Endpoints · Realistic ML Dataset          ║
+║  Run: uvicorn agile_api_server:app --reload --port 8000      ║
+║  Visit: http://localhost:8000                                 ║
+╚══════════════════════════════════════════════════════════════╝
 """
-
-from fastapi import FastAPI, Query, HTTPException, Depends
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import Optional, List
-import pandas as pd
-import numpy as np
-import json
-import random
+from typing import Optional
+import numpy as np, random
 from datetime import datetime, timedelta
 
-# ── App ───────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="Agile Intelligence API",
-    description="REST API serving live agile sprint, team, issue and ML prediction data.",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+app = FastAPI(title="Agile Intelligence API", version="3.0.0",
+              docs_url="/docs", redoc_url="/redoc")
+app.add_middleware(CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── Data Generator ────────────────────────────────────────────────────────
 ASSIGNEES   = ["Alice","Bob","Carol","David","Eve","Frank","Grace","Henry"]
 ISSUE_TYPES = ["Bug","Story","Task","Epic","Sub-task"]
 PRIORITIES  = ["High","Medium","Low"]
 STATUSES    = ["To Do","In Progress","In Review","Done","Blocked"]
 LABELS      = ["feature","bug","tech-debt","hotfix","regression","security","performance"]
 SUMMARIES   = [
-    "Fix login authentication bug","Add global search feature","Refactor API layer",
+    "Fix login authentication bug","Add global search feature","Refactor API gateway",
     "Update PostgreSQL schema","Deploy CI/CD pipeline","Fix null pointer exception",
     "Implement OAuth 2.0","Optimize database queries","Security audit and fixes",
-    "Performance improvements","Migrate to cloud infrastructure","Fix regression in checkout",
+    "Performance improvements","Migrate to cloud infrastructure","Fix checkout regression",
     "Add unit test coverage","Code cleanup and linting","Improve error logging",
     "Fix memory leak in worker","Add dark mode support","Implement caching layer",
-    "Fix CORS configuration","Add rate limiting","Update dependencies",
+    "Fix CORS configuration","Add rate limiting middleware","Update dependencies",
     "Implement webhook system","Fix data export bug","Add API versioning",
+    "Refactor authentication module","Fix session timeout issue",
 ]
 
-np.random.seed(42)
+# ══════════════════════════════════════════════════════════════════════════
+# REALISTIC DATA GENERATOR
+# ══════════════════════════════════════════════════════════════════════════
+def generate_ml_dataset(n=500, seed=42):
+    """Per-row probabilistic generation — no sprint-level label leakage."""
+    rng = np.random.default_rng(seed)
+    pln = rng.integers(20, 90, n).astype(float)
+    hv  = rng.integers(20, 75, n).astype(float)
+    dr  = rng.integers(0,  14, n).astype(float)
+    blk = rng.integers(0,   6, n).astype(float)
+    sc  = rng.integers(-8, 15, n).astype(float)
+    cmp = np.round(np.clip(pln*(0.55+0.25*(hv/75)-0.15*(blk/5)
+          -0.10*(sc.clip(0,15)/15)+rng.normal(0,0.18,n)),0,pln),1)
+    pct = np.round(cmp/pln*100,1)
+    hist_sp = rng.integers(18,65,n).astype(float)
+    asgn_sp = hist_sp*rng.uniform(0.7,1.5,n)
+    rdr     = rng.integers(1,12,n).astype(float)
+    hpt     = rng.integers(0, 6,n).astype(float)
+    wl      = np.round(np.clip(85+rng.normal(0,25,n)+(asgn_sp-hist_sp)*0.8,40,200),1)
+    ol      = rng.binomial(1,np.clip(1/(1+np.exp(-(wl-115)/12+(hpt-2.5)*0.2))
+              +rng.normal(0,0.05,n),0.02,0.98)).astype(int)
+    co      = rng.integers(0,6,n).astype(int)
+    risk    = rng.binomial(1,np.clip(1/(1+np.exp(-(co-2.0)*0.9-(wl-120)/20))
+              +rng.normal(0,0.08,n),0.02,0.98)).astype(int)
+    succ    = rng.binomial(1,np.clip(1/(1+np.exp(-(pct-65)/12+blk*0.35
+              -dr*0.05+sc.clip(0,15)*0.08))+rng.normal(0,0.07,n),0.03,0.97)).astype(int)
+    eh      = np.round(rng.exponential(7,n).clip(1,50),1)
+    sp      = rng.choice([1,2,3,5,8],n)
+    pris    = rng.choice(PRIORITIES,n,p=[0.3,0.5,0.2])
+    ttr     = np.round(eh*np.where(pris=="High",rng.uniform(0.7,1.2,n),
+              rng.uniform(0.8,1.8,n))+rng.normal(0,1.5,n),1).clip(0.5,80)
+    itypes  = rng.choice(ISSUE_TYPES,n,p=[0.3,0.3,0.2,0.1,0.1])
+    asgns   = rng.choice(ASSIGNEES,n)
+    lbls    = rng.choice(LABELS,n)
+    sums    = rng.choice(SUMMARIES,n)
+    sprns   = rng.integers(1,11,n)
+    stats   = rng.choice(STATUSES,n,p=[0.15,0.35,0.2,0.25,0.05])
+    rows = [{
+        "Planned_Story_Points_Sprint":   float(pln[i]),
+        "Completed_Story_Points":        float(cmp[i]),
+        "Percent_Done":                  float(pct[i]),
+        "Days_Remaining_Sprint":         float(dr[i]),
+        "Historical_Velocity":           float(hv[i]),
+        "Blocked_Stories":               float(blk[i]),
+        "Scope_Change":                  float(sc[i]),
+        "Success_Label":                 int(succ[i]),
+        "Sprint_Number":                 int(sprns[i]),
+        "Planned_Story_Points_Resource": float(round(hist_sp[i]*0.9,1)),
+        "Current_Assigned_SP":           float(round(asgn_sp[i],1)),
+        "Historical_Avg_SP":             float(hist_sp[i]),
+        "Remaining_Days_Resource":       float(rdr[i]),
+        "High_Priority_Tasks_Resource":  float(hpt[i]),
+        "Current_Workload_Percent":      float(wl[i]),
+        "Expected_Overload":             int(ol[i]),
+        "Issue_Type":                    str(itypes[i]),
+        "Priority":                      str(pris[i]),
+        "Original_Estimate_Hours":       float(eh[i]),
+        "Story_Points_Issue":            float(sp[i]),
+        "Resolution_Time_Hours":         float(ttr[i]),
+        "Total_SP_This_Sprint":          float(pln[i]),
+        "Historical_Avg_SP_Burnout":     float(hist_sp[i]*0.85),
+        "High_Priority_Tasks_Burnout":   float(hpt[i]),
+        "Consecutive_Overloads":         int(co[i]),
+        "Risk_Flag":                     int(risk[i]),
+        "Summary":                       str(sums[i]),
+        "Labels":                        str(lbls[i]),
+        "Original_Estimate_Resource":    float(eh[i]),
+        "Story_Points_Resource":         float(sp[i]),
+        "Assignee_Resource":             str(asgns[i]),
+        "Assignee":                      str(asgns[i]),
+        "Issue_ID":                      f"AGI-{i+1:04d}",
+        "Status":                        str(stats[i]),
+    } for i in range(n)]
+    dist = {"success_pct":round(float(succ.mean())*100,1),
+            "overload_pct":round(float(ol.mean())*100,1),
+            "burnout_pct":round(float(risk.mean())*100,1)}
+    return rows, dist
 
-def gen_sprints(n_sprints=10):
-    sprints = []
-    for i in range(1, n_sprints+1):
-        pln  = float(np.random.randint(40, 100))
-        cmp  = float(round(np.clip(pln * np.random.uniform(0.4, 1.05), 0, pln), 1))
-        pct  = round(cmp / pln * 100, 1)
-        dr   = int(np.random.randint(0, 14))
-        hv   = float(np.random.randint(30, 80))
-        blk  = int(np.random.randint(0, 6))
-        sc   = int(np.random.randint(-8, 12))
-        wl   = round(float(np.random.uniform(70, 160)), 1)
-        co   = int(np.random.randint(0, 5))
-        start= (datetime.now() - timedelta(days=(n_sprints-i)*14)).strftime("%Y-%m-%d")
-        end  = (datetime.now() - timedelta(days=(n_sprints-i)*14-14)).strftime("%Y-%m-%d")
-        sprints.append({
-            "sprint_id":              f"SP-{i:03d}",
-            "sprint_number":          i,
-            "sprint_name":            f"Sprint {i}",
-            "start_date":             start,
-            "end_date":               end,
-            "state":                  "active" if i==n_sprints else "closed",
-            "planned_story_points":   pln,
-            "completed_story_points": cmp,
-            "percent_done":           pct,
-            "days_remaining":         dr if i==n_sprints else 0,
-            "historical_velocity":    hv,
-            "blocked_stories":        blk,
-            "scope_change":           sc,
-            "success_label":          int(pct > 60 and blk < 4 and dr > 0),
-            "current_workload_pct":   wl,
-            "expected_overload":      int(wl > 110),
-            "consecutive_overloads":  co,
-            "risk_flag":              int(co >= 2 or wl > 130),
-            "assignees":              random.sample(ASSIGNEES, k=min(4, len(ASSIGNEES))),
-        })
-    return sprints
+def gen_sprints(n=10, seed=42):
+    rng = np.random.default_rng(seed)
+    out = []
+    for i in range(1,n+1):
+        pln=float(rng.integers(40,100)); hv=float(rng.integers(30,80))
+        blk=int(rng.integers(0,6)); cmp=float(round(np.clip(pln*rng.uniform(0.4,1.05),0,pln),1))
+        pct=round(cmp/pln*100,1); wl=round(float(rng.uniform(70,160)),1); co=int(rng.integers(0,5))
+        out.append({"sprint_id":f"SP-{i:03d}","sprint_name":f"Sprint {i}",
+            "state":"active" if i==n else "closed","planned_sp":pln,"completed_sp":cmp,
+            "percent_done":pct,"velocity":hv,"blocked":blk,"workload_pct":wl,"consec_ol":co,
+            "success":int(pct>60 and blk<4),"risk":int(co>=2 or wl>130),
+            "start":(datetime.now()-timedelta(days=(n-i)*14)).strftime("%Y-%m-%d"),
+            "end":(datetime.now()-timedelta(days=(n-i)*14-14)).strftime("%Y-%m-%d")})
+    return out
 
-def gen_issues(n=200):
-    issues = []
-    for i in range(1, n+1):
-        itype = np.random.choice(ISSUE_TYPES, p=[0.3,0.3,0.2,0.1,0.1])
-        pri   = np.random.choice(PRIORITIES, p=[0.3,0.5,0.2])
-        stat  = np.random.choice(STATUSES,   p=[0.15,0.35,0.2,0.25,0.05])
-        asgn  = np.random.choice(ASSIGNEES)
-        sp    = int(np.random.choice([1,2,3,5,8]))
-        eh = round(float(np.clip(np.random.exponential(6), 1, 40)), 1)
-        ts    = round(eh * float(np.random.uniform(0.5,1.8)), 1) if stat in ["Done","In Review"] else 0.0
-        lbl   = np.random.choice(LABELS)
-        smry  = np.random.choice(SUMMARIES)
-        sprint= f"SP-{np.random.randint(1,11):03d}"
-        cdate = (datetime.now()-timedelta(days=np.random.randint(1,60))).strftime("%Y-%m-%d")
-        rdate = (datetime.now()-timedelta(days=np.random.randint(0,10))).strftime("%Y-%m-%d") if stat=="Done" else None
-        issues.append({
-            "issue_id":               f"AGI-{i:04d}",
-            "sprint_id":              sprint,
-            "summary":                smry,
-            "issue_type":             itype,
-            "priority":               pri,
-            "status":                 stat,
-            "assignee":               asgn,
-            "story_points":           sp,
-            "original_estimate_hours":eh,
-            "time_spent_hours":       ts,
-            "resolution_time_hours":  ts if ts > 0 else eh,
-            "labels":                 lbl,
-            "created_date":           cdate,
-            "resolved_date":          rdate,
-        })
-    return issues
+def gen_team(seed=42):
+    rng=np.random.default_rng(seed)
+    out=[]
+    for a in ASSIGNEES:
+        wl=round(float(rng.uniform(70,160)),1); co=int(rng.integers(0,5))
+        sp=int(rng.integers(20,80)); hv=float(rng.integers(25,65)); hpt=int(rng.integers(0,6))
+        out.append({"name":a,"role":str(rng.choice(["Senior Dev","Dev","Lead","QA","DevOps"])),
+            "workload_pct":wl,"overload":int(wl>110),"total_sp":sp,
+            "hist_avg_sp":round(hv*0.85,1),"high_priority":hpt,"consec_ol":co,
+            "risk_flag":int(co>=2 or wl>130),
+            "burnout_score":round(min(100,co*15+max(0,wl-100)*0.5),1),
+            "health_score":round(max(0,100-co*15-max(0,wl-100)*0.5),1)})
+    return out
 
-def gen_team(n=200):
-    team = []
-    for asgn in ASSIGNEES:
-        issues_asgn = [i for i in range(n//len(ASSIGNEES))]
-        wl  = round(float(np.random.uniform(70, 160)), 1)
-        co  = int(np.random.randint(0, 5))
-        sp  = int(np.random.randint(20, 80))
-        hv  = float(np.random.randint(25, 65))
-        hpt = int(np.random.randint(0, 6))
-        team.append({
-            "name":                     asgn,
-            "role":                     np.random.choice(["Senior Dev","Dev","Lead","QA","DevOps"]),
-            "current_workload_pct":     wl,
-            "expected_overload":        int(wl > 110),
-            "total_sp_this_sprint":     sp,
-            "historical_avg_sp":        round(hv * 0.85, 1),
-            "high_priority_tasks":      hpt,
-            "consecutive_overloads":    co,
-            "risk_flag":                int(co >= 2 or wl > 130),
-            "planned_sp_resource":      float(np.random.randint(15, 60)),
-            "current_assigned_sp":      float(sp),
-            "remaining_days":           float(np.random.randint(3, 10)),
-            "historical_velocity":      hv,
-            "burnout_score":            round(min(100, co*15 + max(0, wl-100)*0.5), 1),
-            "health_score":             round(max(0, 100 - co*15 - max(0,wl-100)*0.5), 1),
-        })
-    return team
-
-# ── In-memory dataset ─────────────────────────────────────────────────────
-_sprints = gen_sprints(10)
-_issues  = gen_issues(200)
-_team    = gen_team(200)
+_dataset, _dist = generate_ml_dataset(500)
+_sprints         = gen_sprints(10)
+_team            = gen_team()
+_comments: dict  = {}
 
 # ══════════════════════════════════════════════════════════════════════════
-# API LANDING PAGE (HTML)
+# HTML LANDING PAGE — Forest green + cream editorial
 # ══════════════════════════════════════════════════════════════════════════
-@app.get("/", response_class=HTMLResponse, tags=["Root"])
-def root():
-    return """<!DOCTYPE html>
+HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agile Intelligence API</title>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Agile Intelligence — Data API</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: #050609; color: #e2e8f0; font-family: 'SF Mono','Fira Code',monospace; min-height: 100vh; }
-.nav { background: rgba(5,6,9,0.95); border-bottom: 1px solid #0f172a; padding: 0 3rem; height: 56px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 99; }
-.nav-logo { font-size: 0.9rem; font-weight: 800; letter-spacing: 0.12em; color: #f8fafc; display: flex; align-items: center; gap: 10px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg,#3b82f6,#06b6d4); box-shadow: 0 0 12px #3b82f6; animation: pulse 2s infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-.nav-right { font-size: 0.68rem; color: #475569; letter-spacing: 0.08em; }
-.hero { padding: 5rem 3rem 3rem; max-width: 900px; margin: 0 auto; }
-.hero-badge { display: inline-flex; align-items: center; gap: 8px; background: #3b82f615; border: 1px solid #3b82f630; color: #3b82f6; border-radius: 20px; padding: 4px 14px; font-size: 0.68rem; letter-spacing: 0.1em; margin-bottom: 1.5rem; }
-.hero-title { font-size: 3rem; font-weight: 900; letter-spacing: -0.04em; line-height: 1; color: #f8fafc; margin-bottom: 0.8rem; }
-.hero-title span { background: linear-gradient(135deg,#3b82f6,#06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.hero-sub { font-size: 0.88rem; color: #475569; line-height: 1.7; margin-bottom: 2.5rem; }
-.btn-row { display: flex; gap: 12px; flex-wrap: wrap; }
-.btn { padding: 10px 24px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; text-decoration: none; cursor: pointer; }
-.btn-primary { background: #3b82f6; color: #fff; }
-.btn-outline { background: transparent; color: #3b82f6; border: 1px solid #3b82f6; }
-.endpoints { padding: 3rem; max-width: 900px; margin: 0 auto; }
-.sec-title { font-size: 0.65rem; letter-spacing: 0.15em; text-transform: uppercase; color: #3b82f6; border-left: 2px solid #3b82f6; padding-left: 10px; margin-bottom: 1.5rem; }
-.ep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.ep-card { background: #0a0d14; border: 1px solid #161b27; border-radius: 10px; padding: 1.2rem 1.4rem; transition: border-color 0.2s; }
-.ep-card:hover { border-color: #3b82f630; }
-.ep-method { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.1em; margin-bottom: 6px; }
-.ep-method.get  { color: #10b981; }
-.ep-method.post { color: #f59e0b; }
-.ep-path { font-size: 0.82rem; color: #60a5fa; margin-bottom: 5px; font-weight: 700; }
-.ep-desc { font-size: 0.74rem; color: #475569; line-height: 1.5; }
-.ep-tag  { display: inline-block; background: #0f172a; color: #64748b; border-radius: 3px; padding: 1px 7px; font-size: 0.62rem; margin-top: 6px; }
-.stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; padding: 0 3rem 3rem; max-width: 900px; margin: 0 auto; }
-.stat-card { background: #0a0d14; border: 1px solid #161b27; border-radius: 8px; padding: 1rem; text-align: center; }
-.stat-val { font-size: 1.8rem; font-weight: 900; color: #3b82f6; }
-.stat-lbl { font-size: 0.65rem; color: #475569; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 3px; }
-footer { text-align: center; padding: 2rem; font-size: 0.7rem; color: #1e293b; border-top: 1px solid #0f172a; }
+:root{--cream:#f5f0e8;--cream2:#ede7d9;--cream3:#ddd5c4;--forest:#1a3c2e;
+  --forest2:#234d3b;--forest3:#2d6147;--moss:#4a7c59;--sage:#7aad8a;
+  --fern:#a8c8a0;--ink:#1a2420;--bark:#5c4a3a;--stone:#8a8070;
+  --gold:#c4973a;--amber:#e8b84b;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{background:var(--cream);color:var(--ink);font-family:'DM Sans',sans-serif;min-height:100vh;}
+nav{background:var(--forest);padding:0 3rem;height:58px;display:flex;
+  align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;
+  border-bottom:2px solid var(--forest3);}
+.logo{font-family:'DM Serif Display',serif;font-size:1.1rem;color:var(--cream);
+  letter-spacing:0.02em;display:flex;align-items:center;gap:12px;}
+.gem{width:10px;height:10px;background:var(--amber);border-radius:2px;transform:rotate(45deg);}
+.nav-r{display:flex;gap:10px;align-items:center;}
+.npill{font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.08em;
+  text-transform:uppercase;padding:3px 11px;border-radius:2px;text-decoration:none;}
+.ng{background:var(--moss);color:var(--cream);}
+.na{background:transparent;color:var(--amber);border:1px solid #e8b84b40;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--amber);margin-right:5px;animation:blink 2s infinite;}
+.hero{padding:6rem 3rem 4rem;max-width:960px;margin:0 auto;}
+.eyebrow{font-family:'DM Mono',monospace;font-size:0.65rem;letter-spacing:0.18em;
+  text-transform:uppercase;color:var(--moss);margin-bottom:1.4rem;
+  display:flex;align-items:center;gap:10px;}
+.eyebrow::before{content:'';display:block;width:32px;height:1px;background:var(--moss);}
+h1{font-family:'DM Serif Display',serif;font-size:3.6rem;color:var(--forest);
+  line-height:1.06;letter-spacing:-0.02em;margin-bottom:1.2rem;}
+h1 em{color:var(--moss);font-style:italic;}
+.sub{font-size:1rem;color:var(--bark);line-height:1.8;max-width:520px;
+  margin-bottom:2.5rem;font-weight:300;}
+.btns{display:flex;gap:12px;flex-wrap:wrap;}
+.btn{font-family:'DM Mono',monospace;font-size:0.7rem;font-weight:500;
+  letter-spacing:0.08em;text-transform:uppercase;padding:11px 22px;
+  border-radius:2px;text-decoration:none;transition:all 0.15s;}
+.bp{background:var(--forest);color:var(--cream);}
+.bp:hover{background:var(--forest3);}
+.bo{background:transparent;color:var(--forest);border:1px solid #1a3c2e40;}
+.bo:hover{background:var(--cream2);border-color:var(--forest);}
+.rule{border:none;border-top:1px solid var(--cream3);margin:0 3rem;}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);max-width:960px;
+  margin:3rem auto;padding:0 3rem;gap:1px;background:var(--cream3);}
+.sc{background:var(--cream);padding:1.4rem 1.8rem;}
+.sv{font-family:'DM Serif Display',serif;font-size:2.2rem;color:var(--forest);}
+.sl{font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.12em;
+  text-transform:uppercase;color:var(--stone);margin-top:6px;}
+.section{max-width:960px;margin:0 auto;padding:3rem;}
+.sec-lbl{font-family:'DM Mono',monospace;font-size:0.62rem;letter-spacing:0.16em;
+  text-transform:uppercase;color:var(--moss);display:flex;align-items:center;
+  gap:10px;margin-bottom:1.8rem;}
+.sec-lbl::after{content:'';flex:1;height:1px;background:var(--cream3);}
+.epg{display:grid;grid-template-columns:1fr 1fr;gap:1px;
+  background:var(--cream3);border:1px solid var(--cream3);}
+.epc{background:var(--cream);padding:1.2rem 1.5rem;transition:background 0.12s;}
+.epc:hover{background:var(--cream2);}
+.etop{display:flex;align-items:center;gap:10px;margin-bottom:5px;}
+.m{font-family:'DM Mono',monospace;font-size:0.58rem;font-weight:500;
+  letter-spacing:0.08em;padding:2px 8px;border-radius:1px;}
+.get{background:#1a3c2e18;color:var(--forest);}
+.post{background:#c4973a22;color:var(--bark);}
+.ep{font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--forest3);font-weight:500;}
+.ed{font-size:0.76rem;color:var(--stone);line-height:1.5;}
+.dist{background:var(--forest);padding:2rem 2.5rem;margin-top:2rem;
+  display:grid;grid-template-columns:repeat(3,1fr);gap:2rem;}
+.dv{font-family:'DM Serif Display',serif;font-size:2.2rem;color:var(--amber);}
+.dl{font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;
+  text-transform:uppercase;color:var(--fern);margin-top:4px;}
+footer{background:var(--forest);color:var(--fern);font-family:'DM Mono',monospace;
+  font-size:0.62rem;letter-spacing:0.08em;text-align:center;
+  padding:1.6rem;margin-top:4rem;border-top:1px solid var(--forest3);}
 </style>
 </head>
 <body>
-<nav class="nav">
-  <div class="nav-logo"><div class="dot"></div>AGILE INTELLIGENCE API</div>
-  <div class="nav-right">v2.0.0 &nbsp;·&nbsp; <span style="color:#10b981;">● LIVE</span></div>
+<nav>
+  <div class="logo"><div class="gem"></div>Agile Intelligence</div>
+  <div class="nav-r">
+    <span class="npill ng"><span class="dot"></span>LIVE</span>
+    <span class="npill na">v3.0 · REST API</span>
+    <a class="npill na" href="/docs">Swagger ↗</a>
+    <a class="npill na" href="/redoc">ReDoc ↗</a>
+  </div>
 </nav>
-
 <div class="hero">
-  <div class="hero-badge"><div class="dot" style="width:6px;height:6px;"></div>REST API · FastAPI · JSON</div>
-  <div class="hero-title">Agile Data<br><span>Intelligence</span> API</div>
-  <div class="hero-sub">
-    High-performance REST API serving live agile sprint data, team analytics,<br>
-    issue tracking, and ML-ready datasets. Built for the Agile Intelligence Platform.
-  </div>
-  <div class="btn-row">
-    <a class="btn btn-primary" href="/docs">◆ Swagger Docs</a>
-    <a class="btn btn-outline" href="/redoc">◈ ReDoc</a>
-    <a class="btn btn-outline" href="/api/health">● Health Check</a>
-    <a class="btn btn-outline" href="/api/dataset/ml">⚡ ML Dataset</a>
+  <div class="eyebrow">Agile Intelligence · Data API Server</div>
+  <h1>Your agile data,<br><em>intelligently served.</em></h1>
+  <p class="sub">A high-fidelity REST API generating realistic agile sprint, team, and
+  issue data — engineered for ML with probabilistic labels and per-row noise.
+  Connect the Agile Intelligence Dashboard to this server.</p>
+  <div class="btns">
+    <a class="btn bp" href="/docs">Explore API Docs</a>
+    <a class="btn bo" href="/api/dataset/ml">ML Dataset JSON</a>
+    <a class="btn bo" href="/api/health">Health Check</a>
+    <a class="btn bo" href="/api/analytics/summary">Analytics</a>
   </div>
 </div>
-
+<hr class="rule">
 <div class="stats">
-  <div class="stat-card"><div class="stat-val">16</div><div class="stat-lbl">Endpoints</div></div>
-  <div class="stat-card"><div class="stat-val">200</div><div class="stat-lbl">Issues</div></div>
-  <div class="stat-card"><div class="stat-val">10</div><div class="stat-lbl">Sprints</div></div>
-  <div class="stat-card"><div class="stat-val">8</div><div class="stat-lbl">Team Members</div></div>
+  <div class="sc"><div class="sv">__N__</div><div class="sl">ML Records</div></div>
+  <div class="sc"><div class="sv">16</div><div class="sl">Endpoints</div></div>
+  <div class="sc"><div class="sv">32</div><div class="sl">Feature Columns</div></div>
+  <div class="sc"><div class="sv">5</div><div class="sl">ML Objectives</div></div>
 </div>
-
-<div class="endpoints">
-  <div class="sec-title">API ENDPOINTS</div>
-  <div class="ep-grid">
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/sprints</div>
-      <div class="ep-desc">All sprints with velocity, completion %, blocked stories, risk flags</div>
-      <div class="ep-tag">Sprint Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/sprints/{id}</div>
-      <div class="ep-desc">Single sprint detail with full metrics and assignees</div>
-      <div class="ep-tag">Sprint Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/issues</div>
-      <div class="ep-desc">All issues with type, priority, status, assignee, story points</div>
-      <div class="ep-tag">Issue Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/issues/{id}</div>
-      <div class="ep-desc">Single issue detail with full time tracking and resolution data</div>
-      <div class="ep-tag">Issue Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/team</div>
-      <div class="ep-desc">All team members with workload, burnout score, health score</div>
-      <div class="ep-tag">Team Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/team/{name}</div>
-      <div class="ep-desc">Single member detail with full workload and risk metrics</div>
-      <div class="ep-tag">Team Data</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/dataset/ml</div>
-      <div class="ep-desc">Full ML-ready dataset combining all objectives in one response</div>
-      <div class="ep-tag">ML Dataset</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/analytics/summary</div>
-      <div class="ep-desc">Project health summary with KPIs, risk counts, velocity trends</div>
-      <div class="ep-tag">Analytics</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/analytics/velocity</div>
-      <div class="ep-desc">Sprint velocity trend over time with completion rates</div>
-      <div class="ep-tag">Analytics</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/analytics/burnout</div>
-      <div class="ep-desc">Burnout risk report per team member with historical overload data</div>
-      <div class="ep-tag">Analytics</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method post">POST</div>
-      <div class="ep-path">/api/issues</div>
-      <div class="ep-desc">Create new issue with summary, type, priority, story points</div>
-      <div class="ep-tag">Write</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method post">POST</div>
-      <div class="ep-path">/api/issues/{id}/comment</div>
-      <div class="ep-desc">Add comment to an existing issue</div>
-      <div class="ep-tag">Write</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method post">POST</div>
-      <div class="ep-path">/api/issues/{id}/transition</div>
-      <div class="ep-desc">Transition issue status (To Do → In Progress → Done etc.)</div>
-      <div class="ep-tag">Write</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/refresh</div>
-      <div class="ep-desc">Regenerate all data with fresh randomised values</div>
-      <div class="ep-tag">Admin</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/health</div>
-      <div class="ep-desc">API health check — status, version, record counts</div>
-      <div class="ep-tag">Admin</div>
-    </div>
-    <div class="ep-card">
-      <div class="ep-method get">GET</div>
-      <div class="ep-path">/api/search</div>
-      <div class="ep-desc">Search issues by assignee, priority, status, type or keyword</div>
-      <div class="ep-tag">Search</div>
-    </div>
+<div class="section">
+  <div class="sec-lbl">API Endpoints</div>
+  <div class="epg">
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/dataset/ml</span></div>
+      <div class="ed">Full ML-ready dataset — 500 rows, 32 cols, probabilistic labels</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/sprints</span></div>
+      <div class="ed">All sprint records with velocity, completion %, risk flags</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/team</span></div>
+      <div class="ed">Team members with burnout scores, workload %, health index</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/analytics/summary</span></div>
+      <div class="ed">Project health score, KPIs, risk counts</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/analytics/velocity</span></div>
+      <div class="ed">Sprint velocity trend — completed vs planned</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/analytics/burnout</span></div>
+      <div class="ed">Burnout risk ranked by team member</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/search</span></div>
+      <div class="ed">Filter issues by keyword, assignee, priority, status</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/refresh</span></div>
+      <div class="ed">Regenerate all data with a new random seed</div></div>
+    <div class="epc"><div class="etop"><span class="m post">POST</span>
+      <span class="ep">/api/issues</span></div>
+      <div class="ed">Create new issue with type, priority, story points</div></div>
+    <div class="epc"><div class="etop"><span class="m post">POST</span>
+      <span class="ep">/api/issues/{id}/comment</span></div>
+      <div class="ed">Add comment to an existing issue</div></div>
+    <div class="epc"><div class="etop"><span class="m post">POST</span>
+      <span class="ep">/api/issues/{id}/transition</span></div>
+      <div class="ed">Transition status — To Do → In Progress → Done</div></div>
+    <div class="epc"><div class="etop"><span class="m get">GET</span>
+      <span class="ep">/api/health</span></div>
+      <div class="ed">Health check — status, version, record counts</div></div>
+  </div>
+  <div class="dist">
+    <div><div class="dv">__S__%</div><div class="dl">Sprint Success Rate</div></div>
+    <div><div class="dv">__O__%</div><div class="dl">Overload Rate</div></div>
+    <div><div class="dv">__B__%</div><div class="dl">Burnout Risk Rate</div></div>
   </div>
 </div>
-<footer>Agile Intelligence API v2.0.0 · FastAPI · Built for Agile Intelligence Platform</footer>
+<footer>AGILE INTELLIGENCE API · v3.0.0 · FASTAPI · __Y__</footer>
 </body>
 </html>"""
 
+@app.get("/", response_class=HTMLResponse, tags=["Root"])
+def root():
+    return (HTML_PAGE
+            .replace("__N__", str(len(_dataset)))
+            .replace("__S__", str(_dist['success_pct']))
+            .replace("__O__", str(_dist['overload_pct']))
+            .replace("__B__", str(_dist['burnout_pct']))
+            .replace("__Y__", str(datetime.now().year)))
+
 # ══════════════════════════════════════════════════════════════════════════
-# READ ENDPOINTS
+# REST ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════
 @app.get("/api/health", tags=["Admin"])
 def health():
-    return {"status":"ok","version":"2.0.0","timestamp":datetime.now().isoformat(),
-            "records":{"sprints":len(_sprints),"issues":len(_issues),"team":len(_team)}}
+    return {"status":"ok","version":"3.0.0","timestamp":datetime.now().isoformat(),
+            "records":{"ml_dataset":len(_dataset),"sprints":len(_sprints),"team":len(_team)}}
 
 @app.get("/api/refresh", tags=["Admin"])
 def refresh():
-    global _sprints, _issues, _team
-    _sprints = gen_sprints(10)
-    _issues  = gen_issues(200)
-    _team    = gen_team(200)
-    return {"status":"refreshed","timestamp":datetime.now().isoformat()}
+    global _dataset,_dist,_sprints,_team
+    seed=random.randint(1,9999)
+    _dataset,_dist=generate_ml_dataset(500,seed)
+    _sprints=gen_sprints(10,seed); _team=gen_team(seed)
+    return {"status":"refreshed","seed":seed,"timestamp":datetime.now().isoformat()}
 
-# ── Sprints ───────────────────────────────────────────────────────────────
+@app.get("/api/dataset/ml", tags=["ML"])
+def get_ml_dataset(limit:int=Query(500,le=1000)):
+    rows=_dataset[:limit]
+    return {"count":len(rows),"columns":list(rows[0].keys()) if rows else [],
+            "source":"Agile Intelligence API v3.0.0","fetched_at":datetime.now().isoformat(),
+            "label_distribution":_dist,"records":rows}
+
 @app.get("/api/sprints", tags=["Sprints"])
-def get_sprints(state: Optional[str]=None, limit: int=Query(50,le=100)):
-    data = _sprints
-    if state: data = [s for s in data if s["state"]==state]
-    return {"count":len(data[:limit]),"sprints":data[:limit]}
+def get_sprints(state:Optional[str]=None,limit:int=Query(20,le=50)):
+    d=_sprints if not state else [s for s in _sprints if s["state"]==state]
+    return {"count":len(d[:limit]),"sprints":d[:limit]}
 
 @app.get("/api/sprints/{sprint_id}", tags=["Sprints"])
-def get_sprint(sprint_id: str):
-    s = next((x for x in _sprints if x["sprint_id"]==sprint_id), None)
-    if not s: raise HTTPException(404, f"Sprint {sprint_id} not found")
-    issues = [i for i in _issues if i["sprint_id"]==sprint_id]
-    return {**s, "issues_count":len(issues), "issues":issues[:10]}
+def get_sprint(sprint_id:str):
+    s=next((x for x in _sprints if x["sprint_id"]==sprint_id),None)
+    if not s: raise HTTPException(404,f"Sprint {sprint_id} not found")
+    return s
 
-# ── Issues ────────────────────────────────────────────────────────────────
-@app.get("/api/issues", tags=["Issues"])
-def get_issues(
-    assignee:   Optional[str]=None,
-    priority:   Optional[str]=None,
-    status:     Optional[str]=None,
-    issue_type: Optional[str]=None,
-    sprint_id:  Optional[str]=None,
-    limit: int=Query(100, le=500)
-):
-    data = _issues
-    if assignee:   data = [i for i in data if i["assignee"]==assignee]
-    if priority:   data = [i for i in data if i["priority"]==priority]
-    if status:     data = [i for i in data if i["status"]==status]
-    if issue_type: data = [i for i in data if i["issue_type"]==issue_type]
-    if sprint_id:  data = [i for i in data if i["sprint_id"]==sprint_id]
-    return {"count":len(data[:limit]),"issues":data[:limit]}
-
-@app.get("/api/issues/{issue_id}", tags=["Issues"])
-def get_issue(issue_id: str):
-    i = next((x for x in _issues if x["issue_id"]==issue_id), None)
-    if not i: raise HTTPException(404, f"Issue {issue_id} not found")
-    return i
-
-@app.get("/api/search", tags=["Search"])
-def search(q: str="", assignee: Optional[str]=None,
-           priority: Optional[str]=None, status: Optional[str]=None,
-           limit: int=Query(50,le=200)):
-    data = _issues
-    if q:        data = [i for i in data if q.lower() in i["summary"].lower()
-                                          or q.lower() in i["labels"]]
-    if assignee: data = [i for i in data if i["assignee"]==assignee]
-    if priority: data = [i for i in data if i["priority"]==priority]
-    if status:   data = [i for i in data if i["status"]==status]
-    return {"query":q,"count":len(data[:limit]),"results":data[:limit]}
-
-# ── Team ──────────────────────────────────────────────────────────────────
 @app.get("/api/team", tags=["Team"])
 def get_team():
     return {"count":len(_team),"team":_team}
 
 @app.get("/api/team/{name}", tags=["Team"])
-def get_member(name: str):
-    m = next((x for x in _team if x["name"].lower()==name.lower()), None)
-    if not m: raise HTTPException(404, f"Member {name} not found")
-    issues = [i for i in _issues if i["assignee"]==m["name"]]
-    return {**m,"issues_assigned":len(issues),"recent_issues":issues[:5]}
+def get_member(name:str):
+    m=next((x for x in _team if x["name"].lower()==name.lower()),None)
+    if not m: raise HTTPException(404,f"Member {name} not found")
+    return m
 
-# ── ML Dataset ───────────────────────────────────────────────────────────
-@app.get("/api/dataset/ml", tags=["ML"])
-def get_ml_dataset(limit: int=Query(500, le=1000)):
-    """
-    Generates a realistic ML dataset with per-row variation.
-    Each row is an independent observation — no repeated sprint-level labels.
-    Realistic accuracy targets: Sprint ~82-88%, Workload ~78-85%, Burnout ~80-87%
-    """
-    rng = np.random.default_rng(42)
-    n   = min(limit, 1000)
+@app.get("/api/search", tags=["Search"])
+def search(q:str="",assignee:Optional[str]=None,
+           priority:Optional[str]=None,status:Optional[str]=None,
+           limit:int=Query(50,le=200)):
+    d=_dataset
+    if q:        d=[i for i in d if q.lower() in i["Summary"].lower() or q.lower() in i["Labels"]]
+    if assignee: d=[i for i in d if i["Assignee"]==assignee]
+    if priority: d=[i for i in d if i["Priority"]==priority]
+    if status:   d=[i for i in d if i["Status"]==status]
+    return {"query":q,"count":len(d[:limit]),"results":d[:limit]}
 
-    # ── Per-row numerical features with realistic noise ──────────────────
-    pln  = rng.integers(20, 90, n).astype(float)
-    hv   = rng.integers(20, 75, n).astype(float)
-    dr   = rng.integers(0,  14, n).astype(float)
-    blk  = rng.integers(0,   6, n).astype(float)
-    sc   = rng.integers(-8, 15, n).astype(float)
-    # Completion is correlated with features but noisy
-    cmp_ratio = np.clip(
-        0.55 + 0.25*(hv/75) - 0.15*(blk/5) - 0.10*(sc.clip(0,15)/15)
-        + rng.normal(0, 0.18, n), 0.1, 1.05)
-    cmp  = np.round(np.clip(pln * cmp_ratio, 0, pln), 1)
-    pct  = np.round(cmp / pln * 100, 1)
-
-    # Workload: correlated with assigned SP vs capacity
-    wl_base   = 85 + rng.normal(0, 25, n)
-    hist_sp   = rng.integers(18, 65, n).astype(float)
-    asgn_sp   = hist_sp * rng.uniform(0.7, 1.5, n)
-    rdr       = rng.integers(1, 12, n).astype(float)
-    hpt       = rng.integers(0,  6, n).astype(float)
-    wl        = np.round(np.clip(wl_base + (asgn_sp - hist_sp) * 0.8, 40, 200), 1)
-    # Overload: probabilistic based on workload + high priority tasks
-    ol_prob   = 1 / (1 + np.exp(-(wl - 115)/12 + (hpt - 2.5)*0.2))
-    ol        = rng.binomial(1, ol_prob).astype(int)
-
-    # Burnout: correlated with overload history + workload
-    co        = rng.integers(0, 6, n).astype(int)
-    burn_prob = 1 / (1 + np.exp(-(co - 2.0)*0.9 - (wl - 120)/20))
-    burn_prob = np.clip(burn_prob + rng.normal(0, 0.08, n), 0.02, 0.98)
-    risk      = rng.binomial(1, burn_prob).astype(int)
-
-    # Sprint success: probabilistic (not deterministic)
-    succ_prob = 1 / (1 + np.exp(
-        -(pct - 65)/12 + blk*0.35 - dr*0.05 + sc.clip(0,15)*0.08))
-    succ_prob = np.clip(succ_prob + rng.normal(0, 0.07, n), 0.03, 0.97)
-    succ      = rng.binomial(1, succ_prob).astype(int)
-
-    # Issue features
-    eh   = np.round(rng.exponential(7, n).clip(1, 50), 1)
-    sp   = rng.choice([1, 2, 3, 5, 8], n)
-    # TTR correlated with estimate but noisy
-    ttr_mult = np.where(
-        rng.choice(PRIORITIES, n, p=[0.3,0.5,0.2]) == "High", 
-        rng.uniform(0.7, 1.2, n),
-        rng.uniform(0.8, 1.8, n))
-    ttr  = np.round(eh * ttr_mult + rng.normal(0, 1.5, n), 1).clip(0.5, 80)
-
-    itypes = rng.choice(ISSUE_TYPES, n, p=[0.3,0.3,0.2,0.1,0.1])
-    pris   = rng.choice(PRIORITIES,  n, p=[0.3,0.5,0.2])
-    asgns  = rng.choice(ASSIGNEES,   n)
-    lbls   = rng.choice(LABELS,      n)
-    sums   = rng.choice(SUMMARIES,   n)
-    sprns  = rng.integers(1, 11, n)
-
-    rows = []
-    for i in range(n):
-        rows.append({
-            # Obj1 — Sprint
-            "Planned_Story_Points_Sprint":  float(pln[i]),
-            "Completed_Story_Points":       float(cmp[i]),
-            "Percent_Done":                 float(pct[i]),
-            "Days_Remaining_Sprint":        float(dr[i]),
-            "Historical_Velocity":          float(hv[i]),
-            "Blocked_Stories":              float(blk[i]),
-            "Scope_Change":                 float(sc[i]),
-            "Success_Label":                int(succ[i]),
-            "Sprint_Number":                int(sprns[i]),
-            # Obj2 — Workload
-            "Planned_Story_Points_Resource":float(round(hist_sp[i]*0.9,1)),
-            "Current_Assigned_SP":          float(round(asgn_sp[i],1)),
-            "Historical_Avg_SP":            float(hist_sp[i]),
-            "Remaining_Days_Resource":      float(rdr[i]),
-            "High_Priority_Tasks_Resource": float(hpt[i]),
-            "Current_Workload_Percent":     float(wl[i]),
-            "Expected_Overload":            int(ol[i]),
-            # Obj3 — TTR
-            "Issue_Type":                   str(itypes[i]),
-            "Priority":                     str(pris[i]),
-            "Original_Estimate_Hours":      float(eh[i]),
-            "Story_Points_Issue":           float(sp[i]),
-            "Resolution_Time_Hours":        float(ttr[i]),
-            # Obj4 — Burnout
-            "Total_SP_This_Sprint":         float(pln[i]),
-            "Historical_Avg_SP_Burnout":    float(hist_sp[i]*0.85),
-            "High_Priority_Tasks_Burnout":  float(hpt[i]),
-            "Consecutive_Overloads":        int(co[i]),
-            "Risk_Flag":                    int(risk[i]),
-            # Obj5 — Allocation
-            "Summary":                      str(sums[i]),
-            "Labels":                       str(lbls[i]),
-            "Original_Estimate_Resource":   float(eh[i]),
-            "Story_Points_Resource":        float(sp[i]),
-            "Assignee_Resource":            str(asgns[i]),
-            "Assignee":                     str(asgns[i]),
-            # Meta
-            "Issue_ID":                     f"AGI-{i+1:04d}",
-            "Status":                       str(rng.choice(STATUSES, p=[0.15,0.35,0.2,0.25,0.05])),
-        })
-
-    return {
-        "count":      len(rows),
-        "columns":    list(rows[0].keys()) if rows else [],
-        "source":     "Agile Intelligence API v2.0.0",
-        "fetched_at": datetime.now().isoformat(),
-        "label_dist": {
-            "success_label_pct":  round(float(succ.mean())*100, 1),
-            "overload_pct":       round(float(ol.mean())*100, 1),
-            "burnout_pct":        round(float(risk.mean())*100, 1),
-        },
-        "records": rows
-    }
-
-# ── Analytics ─────────────────────────────────────────────────────────────
 @app.get("/api/analytics/summary", tags=["Analytics"])
-def analytics_summary():
-    total_issues  = len(_issues)
-    done          = sum(1 for i in _issues if i["status"]=="Done")
-    blocked       = sum(1 for i in _issues if i["status"]=="Blocked")
-    high_pri      = sum(1 for i in _issues if i["priority"]=="High")
-    at_risk_sp    = sum(1 for s in _sprints if s["success_label"]==0)
-    burnout_risk  = sum(1 for t in _team if t["risk_flag"]==1)
-    overloaded    = sum(1 for t in _team if t["expected_overload"]==1)
-    avg_vel       = round(sum(s["historical_velocity"] for s in _sprints)/len(_sprints),1)
-    avg_cmp       = round(sum(s["percent_done"] for s in _sprints)/len(_sprints),1)
-    health = max(0, 100 - at_risk_sp*8 - burnout_risk*6 - blocked*2 - overloaded*5)
-    return {
-        "health_score":       min(100, health),
-        "total_issues":       total_issues,
-        "issues_done":        done,
-        "issues_blocked":     blocked,
-        "high_priority":      high_pri,
-        "sprints_at_risk":    at_risk_sp,
-        "burnout_risk_count": burnout_risk,
-        "overloaded_members": overloaded,
-        "avg_velocity":       avg_vel,
-        "avg_completion_pct": avg_cmp,
-        "team_size":          len(_team),
-        "active_sprint":      next((s for s in _sprints if s["state"]=="active"), None),
-        "generated_at":       datetime.now().isoformat(),
-    }
+def summary():
+    done=sum(1 for i in _dataset if i["Status"]=="Done")
+    blk =sum(1 for i in _dataset if i["Status"]=="Blocked")
+    hp  =sum(1 for i in _dataset if i["Priority"]=="High")
+    risk=sum(1 for s in _sprints if not s["success"])
+    burn=sum(1 for t in _team if t["risk_flag"])
+    over=sum(1 for t in _team if t["overload"])
+    av  =round(sum(s["velocity"] for s in _sprints)/len(_sprints),1)
+    ac  =round(sum(s["percent_done"] for s in _sprints)/len(_sprints),1)
+    h   =min(100,max(0,100-risk*8-burn*6-blk//5*2-over*5))
+    return {"health_score":h,"total_issues":len(_dataset),"done":done,"blocked":blk,
+            "high_priority":hp,"sprints_at_risk":risk,"burnout_risk":burn,"overloaded":over,
+            "avg_velocity":av,"avg_completion_pct":ac,"team_size":len(_team),
+            "active_sprint":next((s for s in _sprints if s["state"]=="active"),None),
+            "generated_at":datetime.now().isoformat()}
 
 @app.get("/api/analytics/velocity", tags=["Analytics"])
-def analytics_velocity():
-    return {
-        "sprints": [{
-            "sprint_id":   s["sprint_id"],
-            "sprint_name": s["sprint_name"],
-            "velocity":    s["historical_velocity"],
-            "completed":   s["completed_story_points"],
-            "planned":     s["planned_story_points"],
-            "pct_done":    s["percent_done"],
-            "risk":        s["success_label"]==0,
-        } for s in sorted(_sprints, key=lambda x: x["sprint_number"])]
-    }
+def velocity():
+    return {"sprints":[{"id":s["sprint_id"],"name":s["sprint_name"],"state":s["state"],
+            "velocity":s["velocity"],"completed":s["completed_sp"],
+            "planned":s["planned_sp"],"pct":s["percent_done"],"risk":not s["success"]}
+            for s in sorted(_sprints,key=lambda x:x["sprint_id"])]}
 
 @app.get("/api/analytics/burnout", tags=["Analytics"])
-def analytics_burnout():
-    return {
-        "team": sorted([{
-            "name":               t["name"],
-            "burnout_score":      t["burnout_score"],
-            "health_score":       t["health_score"],
-            "workload_pct":       t["current_workload_pct"],
-            "consecutive_ol":     t["consecutive_overloads"],
-            "risk_flag":          t["risk_flag"],
-            "high_priority":      t["high_priority_tasks"],
-        } for t in _team], key=lambda x: -x["burnout_score"])
-    }
+def burnout_report():
+    return {"team":sorted([{"name":t["name"],"burnout_score":t["burnout_score"],
+            "health_score":t["health_score"],"workload_pct":t["workload_pct"],
+            "consec_ol":t["consec_ol"],"risk_flag":t["risk_flag"],
+            "high_priority":t["high_priority"]}
+            for t in _team],key=lambda x:-x["burnout_score"])}
 
-# ══════════════════════════════════════════════════════════════════════════
-# WRITE ENDPOINTS
-# ══════════════════════════════════════════════════════════════════════════
 class IssueCreate(BaseModel):
-    summary:     str
-    issue_type:  str = "Task"
-    priority:    str = "Medium"
-    assignee:    str = "Unassigned"
-    story_points:int = 3
-    sprint_id:   str = "SP-010"
-    labels:      str = "general"
-    description: str = ""
+    summary:str; issue_type:str="Task"; priority:str="Medium"
+    assignee:str="Unassigned"; story_points:int=3; labels:str="general"
 
 class CommentCreate(BaseModel):
-    text: str
-    author: str = "API User"
+    text:str; author:str="API User"
 
 class TransitionCreate(BaseModel):
-    status: str
+    status:str
 
-_comments: dict = {}
+@app.post("/api/issues",tags=["Write"],status_code=201)
+def create_issue(body:IssueCreate):
+    nid=f"AGI-{len(_dataset)+1:04d}"; eh=float(body.story_points*np.random.uniform(1.5,2.5))
+    row={"Issue_ID":nid,"Summary":body.summary,"Issue_Type":body.issue_type,
+         "Priority":body.priority,"Status":"To Do","Assignee":body.assignee,
+         "Story_Points_Issue":float(body.story_points),
+         "Original_Estimate_Hours":round(eh,1),"Labels":body.labels,"Resolution_Time_Hours":round(eh,1)}
+    _dataset.append({**{k:0 for k in _dataset[0]},**row})
+    return {"created":True,"issue_id":nid,"issue":row}
 
-@app.post("/api/issues", tags=["Write"], status_code=201)
-def create_issue(body: IssueCreate):
-    new_id = f"AGI-{len(_issues)+1:04d}"
-    eh     = float(body.story_points * np.random.uniform(1.5, 2.5))
-    new_issue = {
-        "issue_id":               new_id,
-        "sprint_id":              body.sprint_id,
-        "summary":                body.summary,
-        "issue_type":             body.issue_type,
-        "priority":               body.priority,
-        "status":                 "To Do",
-        "assignee":               body.assignee,
-        "story_points":           body.story_points,
-        "original_estimate_hours":round(eh,1),
-        "time_spent_hours":       0.0,
-        "resolution_time_hours":  round(eh,1),
-        "labels":                 body.labels,
-        "created_date":           datetime.now().strftime("%Y-%m-%d"),
-        "resolved_date":          None,
-    }
-    _issues.append(new_issue)
-    return {"created":True,"issue_id":new_id,"issue":new_issue}
+@app.post("/api/issues/{issue_id}/comment",tags=["Write"])
+def add_comment(issue_id:str,body:CommentCreate):
+    if issue_id not in _comments: _comments[issue_id]=[]
+    c={"id":len(_comments[issue_id])+1,"author":body.author,
+       "text":body.text,"at":datetime.now().isoformat()}
+    _comments[issue_id].append(c); return {"added":True,"comment":c}
 
-@app.post("/api/issues/{issue_id}/comment", tags=["Write"])
-def add_comment(issue_id: str, body: CommentCreate):
-    iss = next((x for x in _issues if x["issue_id"]==issue_id), None)
-    if not iss: raise HTTPException(404, f"Issue {issue_id} not found")
-    if issue_id not in _comments: _comments[issue_id] = []
-    c = {"id":len(_comments[issue_id])+1,"author":body.author,
-         "text":body.text,"created_at":datetime.now().isoformat()}
-    _comments[issue_id].append(c)
-    return {"added":True,"comment":c,"total_comments":len(_comments[issue_id])}
-
-@app.post("/api/issues/{issue_id}/transition", tags=["Write"])
-def transition_issue(issue_id: str, body: TransitionCreate):
-    valid = ["To Do","In Progress","In Review","Done","Blocked"]
-    if body.status not in valid:
-        raise HTTPException(400, f"Invalid status. Must be one of: {valid}")
-    iss = next((x for x in _issues if x["issue_id"]==issue_id), None)
-    if not iss: raise HTTPException(404, f"Issue {issue_id} not found")
-    old_status = iss["status"]
-    iss["status"] = body.status
-    if body.status == "Done":
-        iss["resolved_date"] = datetime.now().strftime("%Y-%m-%d")
-        iss["time_spent_hours"] = iss["original_estimate_hours"] * round(float(np.random.uniform(0.7,1.3)),2)
-    return {"transitioned":True,"issue_id":issue_id,
-            "from":old_status,"to":body.status}
+@app.post("/api/issues/{issue_id}/transition",tags=["Write"])
+def transition(issue_id:str,body:TransitionCreate):
+    valid=["To Do","In Progress","In Review","Done","Blocked"]
+    if body.status not in valid: raise HTTPException(400,f"Status must be one of {valid}")
+    row=next((r for r in _dataset if r.get("Issue_ID")==issue_id),None)
+    if not row: raise HTTPException(404,f"{issue_id} not found")
+    old=row["Status"]; row["Status"]=body.status
+    return {"transitioned":True,"issue_id":issue_id,"from":old,"to":body.status}
